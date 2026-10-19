@@ -69,7 +69,7 @@ function enviarCorreosDiarios_(forzar) {
     if (!vencidos.length && !porVencer.length) return;
 
     let html = encabezado_(`Hola, ${u.nombre}`);
-    html += `<p>Dinero disponible hoy: <b>${dinero_(saldo)}</b></p>`;
+    html += disponibleOculto_(saldo);
     if (vencidos.length) {
       html += `<h3 style="color:#C00000;margin-bottom:4px">Pagos vencidos</h3>`;
       html += `<p style="margin-top:0">Ya pasó su fecha y no están marcados como pagados.</p>`;
@@ -104,7 +104,7 @@ function resumenSemanal() {
     const metas = metas_(d, u.usuario, hoy).filter(m => m.estado === 'Activa');
 
     let html = encabezado_(`Tu semana, ${u.nombre}`);
-    html += `<p>Dinero disponible hoy: <b>${dinero_(saldo)}</b></p>`;
+    html += disponibleOculto_(saldo);
 
     html += `<h3 style="margin-bottom:4px">Pagado en los últimos 7 días</h3>`;
     html += pagados.length
@@ -279,6 +279,18 @@ function dinero_(n) {
   const partes = Math.abs(n).toFixed(2).split('.');
   partes[0] = partes[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',');
   return (n < 0 ? '-$' : '$') + partes.join('.');
+}
+
+/** Muestra solo los últimos 2 dígitos del monto: $11,140.00 -> $****40. */
+function oculto_(n) {
+  const entero = String(Math.floor(Math.abs(n)));
+  return (n < 0 ? '-$' : '$') + '****' + entero.slice(-2);
+}
+
+function disponibleOculto_(saldo) {
+  return `<p>Dinero disponible hoy: <b>${oculto_(saldo)}</b><br>` +
+    `<span style="color:#888;font-size:12px">Por seguridad ocultamos tu saldo. ` +
+    `Consulta el monto completo en la <a href="${CONFIG.APP_URL}">app</a>.</span></p>`;
 }
 
 function cuando_(dias) {
