@@ -59,8 +59,24 @@ streamlit run app.py
 
 Los datos de ejemplo del usuario `demo` se pueden borrar de la hoja cuando empieces a usarla.
 
-## Siguientes fases
+- **Saldo inicial:** al empezar, registra en Ingresos el dinero que ya tienes con el tipo "Saldo inicial", una sola vez.
+- **Metas:** crea metas con costo y fecha objetivo, registra aportaciones y ve cuánto apartar al mes.
 
-- Metas de ahorro y aportaciones desde la app.
-- Recordatorios por correo y eventos en Google Calendar (Apps Script dentro de la hoja).
+## Recordatorios por correo y Google Calendar
+
+El archivo `apps_script/Codigo.gs` se instala dentro del Google Sheet:
+
+1. Abre el Google Sheet y ve a **Extensiones > Apps Script**.
+2. Borra lo que haya en el editor, pega todo el contenido de `Codigo.gs` y guarda (Ctrl+S).
+3. Arriba elige la función **instalar** y dale **Ejecutar**. Autoriza los permisos (correo, calendario y hoja). Si aparece "Google no verificó esta app", da clic en **Configuración avanzada** y luego en **Ir a ... (no seguro)**: es tu propio script.
+4. Para probar, ejecuta **probarCorreoDiario**: cada persona recibe sus pagos de los próximos 30 días.
+
+Qué queda programado:
+
+- Todos los días a las 9 a.m.: correo con pagos por vencer (según los días de aviso de cada gasto fijo, el día anterior y el mismo día) y pagos vencidos.
+- Los lunes a las 9 a.m.: resumen semanal con lo pagado, lo pendiente, los ingresos por cobrar y las metas.
+- Cada hora: los pagos pendientes se agregan al calendario "Finanzas Familiares - Pagos" con invitación al correo de cada persona, y los pagados se marcan en verde.
+
+## Siguiente fase
+
 - Historial con gráficas por mes y por categoría.

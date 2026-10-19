@@ -38,6 +38,9 @@ PREFIJOS = {
 # Columnas que se guardan como texto aunque parezcan números o fechas.
 COLUMNAS_TEXTO = {"mes", "usuario", "password_hash", "id", "compromiso_id", "meta_id"}
 
+# Columnas que la hoja calcula sola con ARRAYFORMULA: la app nunca las escribe.
+COLUMNAS_FORMULA = {"Metas": {"actual", "faltante", "avance", "meses_restantes", "ahorro_mensual"}}
+
 
 @st.cache_resource(show_spinner=False)
 def _libro() -> gspread.Spreadsheet:
@@ -115,7 +118,9 @@ def agregar(tabla: str, registros: list[dict]) -> list[str]:
             r["id"] = f"{prefijo}-{n:04d}"
             ids.append(r["id"])
             n += 1
-    filas = [[_celda(c, r.get(c, "")) for c in cols] for r in registros]
+    # Las columnas calculadas con fórmula en la hoja se mandan vacías (None) para no pisar la fórmula.
+    calculadas = COLUMNAS_FORMULA.get(tabla, set())
+    filas = [[None if c in calculadas else _celda(c, r.get(c, "")) for c in cols] for r in registros]
     _hoja(tabla).append_rows(filas, value_input_option="USER_ENTERED", table_range="A1")
     limpiar_cache()
     return ids

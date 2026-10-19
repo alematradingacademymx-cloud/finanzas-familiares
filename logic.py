@@ -100,13 +100,53 @@ def pagos_por_generar(compromisos: pd.DataFrame, pagos: pd.DataFrame, usuario: s
     return nuevos
 
 
+# ---------- metas de ahorro ----------
+
+def meses_restantes(objetivo: date | None, hoy: date) -> int:
+    """Meses que quedan para ahorrar, contando el mes actual como 0 y mínimo 1."""
+    if objetivo is None:
+        return 1
+    return max(1, (objetivo.year - hoy.year) * 12 + objetivo.month - hoy.month)
+
+
+def metas_usuario(t: dict[str, pd.DataFrame], usuario: str, hoy: date | None = None) -> pd.DataFrame:
+    """Metas del usuario con lo ahorrado, lo que falta y cuánto apartar al mes."""
+    hoy = hoy or date.today()
+    cols = ["id", "nombre", "costo", "fecha_objetivo", "actual", "faltante", "avance",
+            "meses", "ahorro_mensual", "prioridad", "estado", "incluir"]
+    met = del_usuario(t["Metas"], usuario)
+    if met.empty:
+        return pd.DataFrame(columns=cols)
+    apo = del_usuario(t["Aportaciones"], usuario)
+    por_meta = (a_num(apo["monto"]).groupby(apo["meta_id"].astype(str)).sum()
+                if not apo.empty else pd.Series(dtype=float))
+
+    filas = []
+    for _, m in met.iterrows():
+        costo = float(pd.to_numeric(m["costo"], errors="coerce") or 0)
+        actual = float(por_meta.get(str(m["id"]), 0.0))
+        faltante = max(0.0, costo - actual)
+        objetivo = a_fecha(m["fecha_objetivo"])
+        meses = meses_restantes(objetivo, hoy)
+        estado = str(m["estado"] or "Activa")
+        filas.append({
+            "id": m["id"], "nombre": m["nombre"], "costo": costo, "fecha_objetivo": objetivo,
+            "actual": actual, "faltante": faltante,
+            "avance": 0.0 if costo == 0 else min(1.0, actual / costo),
+            "meses": meses,
+            "ahorro_mensual": 0.0 if estado != "Activa" else faltante / meses,
+            "prioridad": m["prioridad"] or "Media", "estado": estado,
+            "incluir": es_verdadero(m["incluir_en_faltante"]),
+        })
+    return pd.DataFrame(filas, columns=cols)
+
+
 # ---------- resumen del mes ----------
 
 def resumen_mes(t: dict[str, pd.DataFrame], usuario: str, mes: str) -> dict:
     ing = del_usuario(t["Ingresos"], usuario)
     pag = del_usuario(t["Pagos"], usuario)
     gv = del_usuario(t["Gastos_Variables"], usuario)
-    met = del_usuario(t["Metas"], usuario)
 
     def suma(df, col, **filtros):
         if df.empty:
@@ -123,9 +163,10 @@ def resumen_mes(t: dict[str, pd.DataFrame], usuario: str, mes: str) -> dict:
     pendientes = suma(pag, "monto", estado="Pendiente")
 
     ahorro_metas = 0.0
+    met = metas_usuario(t, usuario)
     if not met.empty:
-        activas = met[(met["estado"].astype(str) == "Activa") & met["incluir_en_faltante"].apply(es_verdadero)]
-        ahorro_metas = float(a_num(activas["ahorro_mensual"]).sum())
+        activas = met[(met["estado"] == "Activa") & met["incluir"]]
+        ahorro_metas = float(activas["ahorro_mensual"].sum())
 
     disponible = recibidos - pagado - variables
     return {

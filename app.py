@@ -64,7 +64,7 @@ if not st.session_state.get("pagos_generados"):
 
 with st.sidebar:
     st.subheader(f"Hola, {st.session_state.nombre}")
-    pagina = st.radio("Menú", ["Resumen", "Ingresos", "Pagos y gastos fijos", "Gastos variables"])
+    pagina = st.radio("Menú", ["Resumen", "Ingresos", "Pagos y gastos fijos", "Gastos variables", "Metas"])
     actual = logic.mes_de(hoy())
     meses = [logic.sumar_meses(actual, i) for i in range(-6, 3)]
     mes = st.selectbox("Mes", meses, index=6, format_func=nombre_mes)
@@ -89,6 +89,10 @@ def tabla_usuario(nombre: str) -> pd.DataFrame:
 
 def pagina_resumen() -> None:
     st.title(f"Resumen de {nombre_mes(mes)}")
+    if tabla_usuario("Ingresos").empty:
+        st.info("**¿Primera vez aquí?** Empieza registrando tu **saldo inicial**: el dinero que tienes hoy, "
+                "ya descontado lo que pagaste antes de usar la app. Ve a **Ingresos** y elige el tipo "
+                "**Saldo inicial**. Después da de alta tus gastos fijos en **Pagos y gastos fijos**.")
     r = logic.resumen_mes(t, U, mes)
 
     c1, c2 = st.columns(2)
@@ -180,11 +184,16 @@ def pagina_ingresos() -> None:
         monto = c2.number_input("Monto", min_value=0.0, step=100.0, format="%.2f")
         concepto = st.selectbox("Concepto", CAT_INGRESO, accept_new_options=True)
         c3, c4 = st.columns(2)
-        tipo = c3.radio("Tipo", ["Fijo", "Variable"], horizontal=True)
+        tipo = c3.radio("Tipo", ["Fijo", "Variable", "Saldo inicial"], horizontal=True,
+                        help="Saldo inicial: el dinero que ya tenías al empezar a usar la app, "
+                             "con tus pagos anteriores ya descontados. Regístralo una sola vez.")
         estado = c4.radio("Estado", ["Recibido", "Esperado"], horizontal=True,
                           help="Esperado: aún no te pagan, pero sabes que llegará en esa fecha.")
         notas = st.text_input("Notas (opcional)")
         if st.form_submit_button("Guardar ingreso", type="primary"):
+            if tipo == "Saldo inicial":
+                estado = "Recibido"
+                concepto = "Saldo inicial"
             if monto <= 0:
                 st.error("Escribe un monto mayor a cero.")
             else:
@@ -342,9 +351,95 @@ def pagina_gastos() -> None:
     st.bar_chart(gv.groupby("categoria")["monto_n"].sum(), horizontal=True, x_label="Monto", y_label="")
 
 
+def pagina_metas() -> None:
+    st.title("Metas de ahorro")
+    with st.form("nueva_meta", clear_on_submit=True):
+        st.subheader("Nueva meta")
+        nombre = st.text_input("¿Para qué quieres ahorrar? (ej. Viaje a Cancún, Fondo de emergencia)")
+        c1, c2 = st.columns(2)
+        costo = c1.number_input("¿Cuánto necesitas?", min_value=0.0, step=500.0, format="%.2f")
+        y, m = hoy().year, hoy().month + 6
+        objetivo = c2.date_input("¿Para cuándo?", value=date(y + (m - 1) // 12, (m - 1) % 12 + 1, 1),
+                                 min_value=hoy(), format="DD/MM/YYYY")
+        c3, c4 = st.columns(2)
+        prioridad = c3.selectbox("Prioridad", ["Alta", "Media", "Baja"], index=1)
+        incluir = c4.checkbox("Contar su ahorro mensual en el faltante del mes", value=True,
+                              help="Si la marcas, el Resumen te dice cuánto juntar para pagar todo y además ahorrar.")
+        if st.form_submit_button("Crear meta", type="primary"):
+            if not nombre.strip() or costo <= 0:
+                st.error("Escribe el nombre de la meta y un monto mayor a cero.")
+            else:
+                db.agregar("Metas", [{
+                    "usuario": U, "nombre": nombre.strip(), "costo": costo,
+                    "fecha_objetivo": objetivo.isoformat(), "prioridad": prioridad,
+                    "estado": "Activa", "incluir_en_faltante": incluir,
+                }])
+                st.toast("Meta creada")
+                st.rerun()
+
+    metas = logic.metas_usuario(t, U, hoy())
+    if metas.empty:
+        st.info("Aún no tienes metas. Crea la primera arriba.")
+        return
+
+    activas = metas[metas["estado"] == "Activa"]
+    if not activas.empty:
+        st.caption(f"Para cumplir tus metas activas a tiempo, aparta **{dinero(activas['ahorro_mensual'].sum())}** "
+                   f"al mes. Llevas ahorrado **{dinero(metas['actual'].sum())}** en total.")
+
+    orden = {"Activa": 0, "Pausada": 1, "Cumplida": 2}
+    metas = metas.assign(_o=metas["estado"].map(orden).fillna(3)).sort_values(["_o", "fecha_objetivo"])
+    for _, mt in metas.iterrows():
+        with st.container(border=True):
+            st.markdown(f"### {mt['nombre']}  \n{mt['estado']} · prioridad {mt['prioridad']} · "
+                        f"para el {fecha_txt(mt['fecha_objetivo'])}")
+            st.progress(float(mt["avance"]), text=f"{mt['avance']:.0%}: llevas {dinero(mt['actual'])} "
+                                                  f"de {dinero(mt['costo'])}")
+            if mt["estado"] == "Activa":
+                st.markdown(f"Te faltan **{dinero(mt['faltante'])}**. Aparta **{dinero(mt['ahorro_mensual'])} "
+                            f"al mes** durante {mt['meses']} {'mes' if mt['meses'] == 1 else 'meses'}.")
+            a, b, c = st.columns(3)
+            with a.popover("Aportar", disabled=mt["estado"] == "Cumplida"):
+                with st.form(f"aportar_{mt['id']}"):
+                    monto = st.number_input("Monto", min_value=0.0, step=100.0, format="%.2f")
+                    fecha = st.date_input("Fecha", value=hoy(), format="DD/MM/YYYY")
+                    if st.form_submit_button("Guardar aportación", type="primary"):
+                        if monto <= 0:
+                            st.error("Escribe un monto mayor a cero.")
+                        else:
+                            db.agregar("Aportaciones", [{
+                                "usuario": U, "meta_id": mt["id"], "fecha": fecha.isoformat(), "monto": monto,
+                            }])
+                            if mt["actual"] + monto >= mt["costo"]:
+                                db.actualizar("Metas", mt["id"], {"estado": "Cumplida"})
+                                st.balloons()
+                            st.toast("Aportación guardada")
+                            st.rerun()
+            if mt["estado"] == "Activa" and b.button("Pausar", key=f"pausa_{mt['id']}"):
+                db.actualizar("Metas", mt["id"], {"estado": "Pausada"})
+                st.rerun()
+            if mt["estado"] == "Pausada" and b.button("Reactivar", key=f"react_{mt['id']}"):
+                db.actualizar("Metas", mt["id"], {"estado": "Activa"})
+                st.rerun()
+            if mt["estado"] != "Cumplida" and c.button("Marcar cumplida", key=f"cumple_{mt['id']}"):
+                db.actualizar("Metas", mt["id"], {"estado": "Cumplida"})
+                st.rerun()
+
+    apo = tabla_usuario("Aportaciones")
+    if not apo.empty:
+        with st.expander("Historial de aportaciones"):
+            nombres = dict(zip(metas["id"].astype(str), metas["nombre"]))
+            st.dataframe(pd.DataFrame({
+                "Fecha": apo["fecha"],
+                "Meta": apo["meta_id"].astype(str).map(nombres).fillna(apo["meta_id"]),
+                "Monto": logic.a_num(apo["monto"]).apply(dinero),
+            }).sort_values("Fecha", ascending=False), hide_index=True)
+
+
 {
     "Resumen": pagina_resumen,
     "Ingresos": pagina_ingresos,
     "Pagos y gastos fijos": pagina_pagos,
     "Gastos variables": pagina_gastos,
+    "Metas": pagina_metas,
 }[pagina]()
