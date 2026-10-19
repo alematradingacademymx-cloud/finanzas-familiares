@@ -13,6 +13,15 @@ import logic
 
 st.set_page_config(page_title="Finanzas Familiares", page_icon=":material/savings:", layout="centered")
 
+# Oculta los íconos de la barra superior (compartir, estrella, editar, GitHub y menú) y el pie de página.
+# El botón para abrir el menú lateral se queda visible.
+st.markdown("""
+<style>
+[data-testid="stToolbar"], [data-testid="stToolbarActions"], [data-testid="stAppDeployButton"],
+.stAppDeployButton, #MainMenu, footer { display: none !important; visibility: hidden !important; }
+</style>
+""", unsafe_allow_html=True)
+
 FRECUENCIAS = ["Mensual", "Quincenal", "Bimestral", "Anual", "Única"]
 METODOS = ["Efectivo", "Débito", "Crédito", "Transferencia"]
 MESES_ES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto",
