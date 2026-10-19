@@ -122,28 +122,53 @@ def pagina_resumen() -> None:
     st.caption(f"Dinero disponible hoy (todo lo recibido menos lo pagado, gastado y apartado en metas): {dinero(saldo)}")
     if cal.empty:
         st.info("No tienes pagos pendientes.")
+    else:
+        lineas = ["**Próximos pagos**"]
+        for _, p in cal.iterrows():
+            dias = (p["fecha"] - hoy()).days if isinstance(p["fecha"], date) else None
+            cuando = ("hoy" if dias == 0 else "venció" if dias is not None and dias < 0
+                      else f"en {dias} días" if dias is not None else "")
+            linea = f"- **{p['concepto']}**: {fecha_txt(p['fecha'])} ({cuando}), {dinero(p['monto'])}"
+            if p["falta"] > 0:
+                linea += f". Te faltan **{dinero(p['falta'])}**"
+            lineas.append(linea)
+        lineas.append(f"\n**Total por pagar: {dinero(cal['monto'].sum())}**")
+        st.info("\n".join(lineas))
+
+        vista = pd.DataFrame({
+            "Fecha": cal["fecha"].apply(fecha_txt),
+            "Pago": cal["concepto"],
+            "Monto": cal["monto"].apply(dinero),
+            "Acumulado": cal["acumulado"].apply(dinero),
+            "Estado": cal["estado"],
+            "Falta": cal["falta"].apply(lambda x: dinero(x) if x > 0 else ""),
+        })
+
+        def color(fila):
+            e = fila["Estado"]
+            fondo = "#FCE4E4" if "No alcanza" in e else "#FFF2CC" if "esperado" in e else "#D9EAD3"
+            return [f"background-color: {fondo}; color: #1a1a1a"] * len(fila)
+
+        st.dataframe(vista.style.apply(color, axis=1), hide_index=True)
+
+    st.subheader("Tus pagos fijos")
+    comps = tabla_usuario("Compromisos")
+    if not comps.empty:
+        comps = comps[comps["activo"].apply(logic.es_verdadero)]
+    if comps.empty:
+        st.info("Aún no tienes gastos fijos activos.")
         return
-    p = cal.iloc[0]
-    texto = f"Próximo pago: **{p['concepto']}** el {fecha_txt(p['fecha'])} por **{dinero(p['monto'])}**."
-    if p["falta"] > 0:
-        texto += f" Te faltan **{dinero(p['falta'])}** para cubrirlo."
-    st.info(texto)
-
-    vista = pd.DataFrame({
-        "Fecha": cal["fecha"].apply(fecha_txt),
-        "Pago": cal["concepto"],
-        "Monto": cal["monto"].apply(dinero),
-        "Acumulado": cal["acumulado"].apply(dinero),
-        "Estado": cal["estado"],
-        "Falta": cal["falta"].apply(lambda x: dinero(x) if x > 0 else ""),
-    })
-
-    def color(fila):
-        e = fila["Estado"]
-        fondo = "#FCE4E4" if "No alcanza" in e else "#FFF2CC" if "esperado" in e else "#D9EAD3"
-        return [f"background-color: {fondo}; color: #1a1a1a"] * len(fila)
-
-    st.dataframe(vista.style.apply(color, axis=1), hide_index=True)
+    comps = comps.assign(monto_n=logic.a_num(comps["monto"]),
+                         dia_n=pd.to_numeric(comps["dia_pago"], errors="coerce")).sort_values("dia_n")
+    st.dataframe(pd.DataFrame({
+        "Pago": comps["concepto"],
+        "Se paga": comps.apply(lambda c: f"Día {int(c['dia_n'])} · {c['frecuencia']}"
+                               if pd.notna(c["dia_n"]) else c["frecuencia"], axis=1),
+        "Monto": comps["monto_n"].apply(dinero),
+        "Categoría": comps["categoria"],
+    }), hide_index=True)
+    mensual = comps.loc[comps["frecuencia"] == "Mensual", "monto_n"].sum()
+    st.caption(f"Total de pagos fijos mensuales: {dinero(mensual)}")
 
 
 def pagina_ingresos() -> None:
