@@ -28,16 +28,19 @@ COLUMNAS = {
               "meses_restantes", "ahorro_mensual", "prioridad", "estado", "incluir_en_faltante"],
     "Aportaciones": ["id", "usuario", "meta_id", "fecha", "monto", "notas", "origen"],
     "Ahorro": ["id", "usuario", "fecha", "tipo", "monto", "notas"],
+    "Creditos": ["id", "usuario", "nombre", "banco", "tipo", "limite", "dia_corte", "dia_pago", "activo", "notas"],
+    "Movimientos_Credito": ["id", "usuario", "credito_id", "fecha", "tipo", "monto", "notas"],
     "Categorias": ["tipo", "categoria"],
 }
 
 PREFIJOS = {
     "Ingresos": "ING", "Compromisos": "COM", "Pagos": "PAG",
     "Gastos_Variables": "GV", "Metas": "MET", "Aportaciones": "APO", "Ahorro": "AHO",
+    "Creditos": "CRE", "Movimientos_Credito": "MCR",
 }
 
 # Columnas que se guardan como texto aunque parezcan números o fechas.
-COLUMNAS_TEXTO = {"mes", "usuario", "password_hash", "id", "compromiso_id", "meta_id"}
+COLUMNAS_TEXTO = {"mes", "usuario", "password_hash", "id", "compromiso_id", "meta_id", "credito_id"}
 
 # Columnas que la hoja calcula sola con ARRAYFORMULA: la app nunca las escribe.
 COLUMNAS_FORMULA = {"Metas": {"actual", "faltante", "avance", "meses_restantes", "ahorro_mensual"}}

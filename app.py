@@ -64,7 +64,7 @@ if not st.session_state.get("pagos_generados"):
 
 with st.sidebar:
     st.subheader(f"Hola, {st.session_state.nombre}")
-    pagina = st.radio("Menú", ["Resumen", "Ingresos", "Pagos y gastos fijos", "Gastos variables", "Ahorro", "Metas", "Historial"])
+    pagina = st.radio("Menú", ["Resumen", "Ingresos", "Pagos y gastos fijos", "Gastos variables", "Ahorro", "Metas", "Créditos", "Historial"])
     actual = logic.mes_de(hoy())
     meses = [logic.sumar_meses(actual, i) for i in range(-6, 3)]
     mes = st.selectbox("Mes", meses, index=6, format_func=nombre_mes)
@@ -105,6 +105,13 @@ def pagina_resumen() -> None:
     c5, c6 = st.columns(2)
     c5.metric("Tu ahorro", dinero(logic.saldo_ahorro(t, U)), help="Dinero aparte: no se descuenta de tu disponible.")
     c6.metric("Ahorrado en metas", dinero(metas_r["actual"].sum() if not metas_r.empty else 0))
+    cred_r = logic.creditos_usuario(t, U, hoy())
+    if not cred_r.empty and cred_r["activo"].any():
+        cred_r = cred_r[cred_r["activo"]]
+        c7, c8 = st.columns(2)
+        c7.metric("Deuda en créditos", dinero(cred_r["saldo_pagar"].sum()),
+                  help="Lo que debes en tarjetas y préstamos. No se descuenta de tu disponible.")
+        c8.metric("Crédito disponible", dinero(cred_r.loc[cred_r["tipo"] != "Préstamo", "disponible"].sum()))
 
     if r["faltante"] == 0:
         st.success("Con lo que ya recibiste alcanzas a cubrir los pagos y el ahorro de este mes.")
@@ -594,6 +601,128 @@ def pagina_historial() -> None:
     }).iloc[::-1], hide_index=True)
 
 
+def pagina_creditos() -> None:
+    st.title("Créditos")
+    st.caption("Tus tarjetas de crédito y préstamos. Funcionan aparte de tu disponible: "
+               "un cargo aumenta lo que debes y un pago lo reduce.")
+    creds = logic.creditos_usuario(t, U, hoy())
+    activos = creds[creds["activo"]] if not creds.empty else creds
+    if not activos.empty:
+        c1, c2 = st.columns(2)
+        c1.metric("Total a pagar", dinero(activos["saldo_pagar"].sum()))
+        c2.metric("Crédito disponible (tarjetas)",
+                  dinero(activos.loc[activos["tipo"] != "Préstamo", "disponible"].sum()))
+
+    with st.expander("Agregar tarjeta o crédito", expanded=creds.empty):
+        with st.form("nuevo_credito", clear_on_submit=True):
+            a, b = st.columns(2)
+            nombre = a.text_input("Nombre (ej. Visa Oro, Préstamo auto)")
+            banco = b.text_input("Banco")
+            tipo = st.radio("Tipo", ["Tarjeta de crédito", "Préstamo"], horizontal=True)
+            a, b = st.columns(2)
+            limite = a.number_input("Límite de crédito (o monto del préstamo)", min_value=0.0, step=1000.0,
+                                    format="%.2f")
+            saldo = b.number_input("Saldo que debes hoy", min_value=0.0, step=100.0, format="%.2f",
+                                   help="Lo que tienes pendiente por pagar en este momento.")
+            a, b = st.columns(2)
+            corte = a.number_input("Día de corte", min_value=1, max_value=31, value=1)
+            pago = b.number_input("Día límite de pago", min_value=1, max_value=31, value=20)
+            if st.form_submit_button("Guardar", type="primary"):
+                if not nombre.strip():
+                    st.error("Escribe el nombre de la tarjeta o crédito.")
+                else:
+                    cid = db.agregar("Creditos", [{
+                        "usuario": U, "nombre": nombre.strip(), "banco": banco.strip(), "tipo": tipo,
+                        "limite": limite, "dia_corte": int(corte), "dia_pago": int(pago), "activo": True,
+                    }])[0]
+                    if saldo > 0:
+                        db.agregar("Movimientos_Credito", [{
+                            "usuario": U, "credito_id": cid, "fecha": hoy().isoformat(), "tipo": "Cargo",
+                            "monto": saldo, "notas": "Saldo inicial",
+                        }])
+                    st.toast(f"{nombre.strip()} agregado")
+                    st.rerun()
+
+    if creds.empty:
+        st.info("Aún no tienes tarjetas ni créditos registrados.")
+        return
+
+    for _, c in creds.sort_values(["activo", "dias_pago"], ascending=[False, True]).iterrows():
+        prestamo = c["tipo"] == "Préstamo"
+        with st.container(border=True):
+            banco_txt = f" · {c['banco']}" if c["banco"] else ""
+            st.markdown(f"### {c['nombre']}{banco_txt}  \n{c['tipo']}"
+                        + ("" if c["activo"] else " · **Inactivo**"))
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Saldo a pagar", dinero(c["saldo_pagar"]))
+            if prestamo:
+                m2.metric("Ya pagado", dinero(max(0.0, c["limite"] - c["saldo_pagar"])))
+                m3.metric("Monto del préstamo", dinero(c["limite"]))
+            else:
+                m2.metric("Saldo disponible", dinero(c["disponible"]))
+                m3.metric("Límite", dinero(c["limite"]))
+            if c["limite"] > 0:
+                texto = (f"{1 - c['uso']:.0%} pagado" if prestamo else f"{c['uso']:.0%} del límite usado")
+                st.progress(float(1 - c["uso"] if prestamo else c["uso"]), text=texto)
+            dias = c["dias_pago"]
+            cuando = "" if dias is None else (" (hoy)" if dias == 0 else " (mañana)" if dias == 1
+                                              else f" (en {dias} días)")
+            linea = f"**Fecha de pago:** día {c['dia_pago']}, próxima el {fecha_txt(c['prox_pago'])}{cuando}"
+            if not prestamo:
+                linea = (f"**Fecha de corte:** día {c['dia_corte']}, próxima el {fecha_txt(c['prox_corte'])}  \n"
+                         + linea)
+            st.markdown(linea)
+            if c["activo"] and dias is not None and dias <= 5 and c["saldo_pagar"] > 0:
+                st.warning(f"Tu pago de {c['nombre']} vence pronto. Debes {dinero(c['saldo_pagar'])}.")
+
+            a, b, d = st.columns(3)
+            with a.popover("Registrar cargo", disabled=not c["activo"]):
+                with st.form(f"cargo_{c['id']}", clear_on_submit=True):
+                    monto = st.number_input("Monto", min_value=0.0, step=100.0, format="%.2f")
+                    fecha = st.date_input("Fecha", value=hoy(), format="DD/MM/YYYY")
+                    nota = st.text_input("¿Qué compraste? (opcional)")
+                    if st.form_submit_button("Guardar cargo", type="primary"):
+                        if monto <= 0:
+                            st.error("Escribe un monto mayor a cero.")
+                        else:
+                            db.agregar("Movimientos_Credito", [{
+                                "usuario": U, "credito_id": c["id"], "fecha": fecha.isoformat(),
+                                "tipo": "Cargo", "monto": monto, "notas": nota}])
+                            st.toast(f"Cargo de {dinero(monto)} registrado")
+                            st.rerun()
+            with b.popover("Registrar pago", disabled=c["saldo_pagar"] <= 0):
+                with st.form(f"pago_{c['id']}", clear_on_submit=True):
+                    monto = st.number_input("Monto", min_value=0.0, value=float(c["saldo_pagar"]),
+                                            step=100.0, format="%.2f")
+                    fecha = st.date_input("Fecha", value=hoy(), format="DD/MM/YYYY")
+                    if st.form_submit_button("Guardar pago", type="primary"):
+                        if monto <= 0:
+                            st.error("Escribe un monto mayor a cero.")
+                        elif monto > c["saldo_pagar"] + 0.005:
+                            st.error(f"Solo debes {dinero(c['saldo_pagar'])}.")
+                        else:
+                            db.agregar("Movimientos_Credito", [{
+                                "usuario": U, "credito_id": c["id"], "fecha": fecha.isoformat(),
+                                "tipo": "Pago", "monto": monto, "notas": ""}])
+                            st.toast(f"Pago de {dinero(monto)} registrado")
+                            st.rerun()
+            etiqueta = "Desactivar" if c["activo"] else "Activar"
+            if d.button(etiqueta, key=f"act_cre_{c['id']}"):
+                db.actualizar("Creditos", c["id"], {"activo": not c["activo"]})
+                st.rerun()
+
+            mov = logic.movimientos_credito(t, U, c["id"])
+            if not mov.empty:
+                with st.expander("Movimientos"):
+                    st.dataframe(pd.DataFrame({
+                        "Fecha": mov["fecha"].apply(fecha_txt),
+                        "Movimiento": mov["tipo"],
+                        "Monto": mov.apply(lambda r: ("-" if r["tipo"] == "Pago" else "+") + dinero(r["monto"]),
+                                           axis=1),
+                        "Nota": mov["notas"],
+                    }), hide_index=True)
+
+
 {
     "Resumen": pagina_resumen,
     "Ingresos": pagina_ingresos,
@@ -601,5 +730,6 @@ def pagina_historial() -> None:
     "Gastos variables": pagina_gastos,
     "Ahorro": pagina_ahorro,
     "Metas": pagina_metas,
+    "Créditos": pagina_creditos,
     "Historial": pagina_historial,
 }[pagina]()

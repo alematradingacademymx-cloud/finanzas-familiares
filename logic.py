@@ -211,7 +211,7 @@ def saldo_actual(t: dict[str, pd.DataFrame], usuario: str) -> float:
     pagado = a_num(pag.loc[pag["estado"] == "Pagado", "monto_pagado"]).sum() if not pag.empty else 0
     gastado = a_num(gv["monto"]).sum() if not gv.empty else 0
     if not apo.empty:
-        apo = apo[apo["origen"].astype(str) != "Ahorro"]
+        apo = apo[apo.get("origen", pd.Series("", index=apo.index)).astype(str) != "Ahorro"]
     apartado = a_num(apo["monto"]).sum() if not apo.empty else 0
     return float(recibido - pagado - gastado - apartado)
 
@@ -337,3 +337,62 @@ def calendario_pagos(t: dict[str, pd.DataFrame], usuario: str, hoy: date) -> pd.
     pend["estado"] = estados
     pend["falta"] = faltas
     return pend[cols].reset_index(drop=True)
+
+
+# ---------- créditos (tarjetas y préstamos) ----------
+
+def proxima_fecha(dia, hoy: date) -> date | None:
+    """Siguiente fecha (hoy o después) que cae en ese día del mes."""
+    try:
+        dia = max(1, min(31, int(float(dia))))
+    except (TypeError, ValueError):
+        return None
+    y, m = hoy.year, hoy.month
+    for _ in range(2):
+        f = date(y, m, min(dia, calendar.monthrange(y, m)[1]))
+        if f >= hoy:
+            return f
+        y, m = (y + 1, 1) if m == 12 else (y, m + 1)
+    return None
+
+
+def creditos_usuario(t: dict[str, pd.DataFrame], usuario: str, hoy: date) -> pd.DataFrame:
+    """Tarjetas y préstamos con su saldo a pagar, saldo disponible y próximas fechas de corte y pago.
+
+    Son independientes del dinero disponible: un cargo aumenta la deuda y un pago la reduce.
+    """
+    cols = ["id", "nombre", "banco", "tipo", "limite", "dia_corte", "dia_pago", "activo",
+            "saldo_pagar", "disponible", "uso", "prox_corte", "prox_pago", "dias_pago"]
+    cre = del_usuario(t.get("Creditos", pd.DataFrame()), usuario)
+    if cre.empty:
+        return pd.DataFrame(columns=cols)
+    mov = del_usuario(t.get("Movimientos_Credito", pd.DataFrame()), usuario)
+    if not mov.empty:
+        firmado = a_num(mov["monto"]).where(mov["tipo"] != "Pago", -a_num(mov["monto"]))
+        saldos = firmado.groupby(mov["credito_id"].astype(str)).sum()
+    else:
+        saldos = pd.Series(dtype=float)
+    filas = []
+    for _, c in cre.iterrows():
+        limite = float(pd.to_numeric(c["limite"], errors="coerce") or 0)
+        saldo = max(0.0, float(saldos.get(str(c["id"]), 0.0)))
+        pago = proxima_fecha(c["dia_pago"], hoy)
+        filas.append({
+            "id": c["id"], "nombre": c["nombre"], "banco": c["banco"],
+            "tipo": c["tipo"] or "Tarjeta de crédito", "limite": limite,
+            "dia_corte": c["dia_corte"], "dia_pago": c["dia_pago"], "activo": es_verdadero(c["activo"]),
+            "saldo_pagar": saldo, "disponible": max(0.0, limite - saldo),
+            "uso": 0.0 if limite <= 0 else min(1.0, saldo / limite),
+            "prox_corte": proxima_fecha(c["dia_corte"], hoy), "prox_pago": pago,
+            "dias_pago": (pago - hoy).days if pago else None,
+        })
+    return pd.DataFrame(filas, columns=cols)
+
+
+def movimientos_credito(t: dict[str, pd.DataFrame], usuario: str, credito_id: str) -> pd.DataFrame:
+    mov = del_usuario(t.get("Movimientos_Credito", pd.DataFrame()), usuario)
+    if mov.empty:
+        return mov
+    mov = mov[mov["credito_id"].astype(str) == str(credito_id)]
+    return mov.assign(fecha=mov["fecha"].apply(a_fecha), monto=a_num(mov["monto"])).sort_values(
+        "fecha", ascending=False, na_position="last")
