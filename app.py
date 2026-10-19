@@ -608,9 +608,13 @@ def pagina_creditos() -> None:
     creds = logic.creditos_usuario(t, U, hoy())
     activos = creds[creds["activo"]] if not creds.empty else creds
     if not activos.empty:
-        c1, c2 = st.columns(2)
+        c1, c2, c3 = st.columns(3)
         c1.metric("Total a pagar", dinero(activos["saldo_pagar"].sum()))
-        c2.metric("Crédito disponible (tarjetas)",
+        con_int = activos["pago_total"].where(activos["pago_total"] > 0, activos["saldo_pagar"]).sum()
+        c2.metric("Total con intereses", dinero(con_int),
+                  help="Suma el pago total con intereses de cada crédito. Donde no lo has capturado, "
+                       "usa el saldo a pagar.")
+        c3.metric("Crédito disponible (tarjetas)",
                   dinero(activos.loc[activos["tipo"] != "Préstamo", "disponible"].sum()))
 
     with st.expander("Agregar tarjeta o crédito", expanded=creds.empty):
@@ -624,6 +628,10 @@ def pagina_creditos() -> None:
                                     format="%.2f")
             saldo = b.number_input("Saldo que debes hoy", min_value=0.0, step=100.0, format="%.2f",
                                    help="Lo que tienes pendiente por pagar en este momento.")
+            total_int = st.number_input(
+                "Pago total con intereses (opcional)", min_value=0.0, step=100.0, format="%.2f",
+                help="Lo que terminarás pagando en total con intereses. Viene en tu estado de cuenta "
+                     "o en el contrato del préstamo. Puedes capturarlo o actualizarlo después.")
             a, b = st.columns(2)
             corte = a.number_input("Día de corte", min_value=1, max_value=31, value=1)
             pago = b.number_input("Día límite de pago", min_value=1, max_value=31, value=20)
@@ -634,6 +642,7 @@ def pagina_creditos() -> None:
                     cid = db.agregar("Creditos", [{
                         "usuario": U, "nombre": nombre.strip(), "banco": banco.strip(), "tipo": tipo,
                         "limite": limite, "dia_corte": int(corte), "dia_pago": int(pago), "activo": True,
+                        "pago_total_intereses": total_int if total_int > 0 else "",
                     }])[0]
                     if saldo > 0:
                         db.agregar("Movimientos_Credito", [{
@@ -653,14 +662,22 @@ def pagina_creditos() -> None:
             banco_txt = f" · {c['banco']}" if c["banco"] else ""
             st.markdown(f"### {c['nombre']}{banco_txt}  \n{c['tipo']}"
                         + ("" if c["activo"] else " · **Inactivo**"))
-            m1, m2, m3 = st.columns(3)
+            m1, m2, m3, m4 = st.columns(4)
             m1.metric("Saldo a pagar", dinero(c["saldo_pagar"]))
-            if prestamo:
-                m2.metric("Ya pagado", dinero(max(0.0, c["limite"] - c["saldo_pagar"])))
-                m3.metric("Monto del préstamo", dinero(c["limite"]))
+            if c["pago_total"] > 0:
+                m2.metric("Pago total con intereses", dinero(c["pago_total"]),
+                          help=f"Intereses: {dinero(c['intereses'])} sobre tu saldo a pagar.")
             else:
-                m2.metric("Saldo disponible", dinero(c["disponible"]))
-                m3.metric("Límite", dinero(c["limite"]))
+                m2.metric("Pago total con intereses", "Sin capturar",
+                          help="Captúralo con el botón Pago total, abajo.")
+            if prestamo:
+                m3.metric("Ya pagado", dinero(max(0.0, c["limite"] - c["saldo_pagar"])))
+                m4.metric("Monto del préstamo", dinero(c["limite"]))
+            else:
+                m3.metric("Saldo disponible", dinero(c["disponible"]))
+                m4.metric("Límite", dinero(c["limite"]))
+            if c["intereses"] > 0:
+                st.caption(f"Pagarías **{dinero(c['intereses'])}** de intereses sobre lo que debes hoy.")
             if c["limite"] > 0:
                 texto = (f"{1 - c['uso']:.0%} pagado" if prestamo else f"{c['uso']:.0%} del límite usado")
                 st.progress(float(1 - c["uso"] if prestamo else c["uso"]), text=texto)
@@ -675,7 +692,16 @@ def pagina_creditos() -> None:
             if c["activo"] and dias is not None and dias <= 5 and c["saldo_pagar"] > 0:
                 st.warning(f"Tu pago de {c['nombre']} vence pronto. Debes {dinero(c['saldo_pagar'])}.")
 
-            a, b, d = st.columns(3)
+            a, b, e, d = st.columns(4)
+            with e.popover("Pago total"):
+                with st.form(f"total_{c['id']}"):
+                    nuevo = st.number_input("Pago total con intereses", min_value=0.0,
+                                            value=float(c["pago_total"]), step=100.0, format="%.2f",
+                                            help="Pon 0 para borrarlo.")
+                    if st.form_submit_button("Guardar", type="primary"):
+                        db.actualizar("Creditos", c["id"], {"pago_total_intereses": nuevo if nuevo > 0 else ""})
+                        st.toast("Pago total actualizado")
+                        st.rerun()
             with a.popover("Registrar cargo", disabled=not c["activo"]):
                 with st.form(f"cargo_{c['id']}", clear_on_submit=True):
                     monto = st.number_input("Monto", min_value=0.0, step=100.0, format="%.2f")

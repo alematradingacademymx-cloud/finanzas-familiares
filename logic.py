@@ -362,7 +362,8 @@ def creditos_usuario(t: dict[str, pd.DataFrame], usuario: str, hoy: date) -> pd.
     Son independientes del dinero disponible: un cargo aumenta la deuda y un pago la reduce.
     """
     cols = ["id", "nombre", "banco", "tipo", "limite", "dia_corte", "dia_pago", "activo",
-            "saldo_pagar", "disponible", "uso", "prox_corte", "prox_pago", "dias_pago"]
+            "saldo_pagar", "disponible", "uso", "prox_corte", "prox_pago", "dias_pago",
+            "pago_total", "intereses"]
     cre = del_usuario(t.get("Creditos", pd.DataFrame()), usuario)
     if cre.empty:
         return pd.DataFrame(columns=cols)
@@ -374,9 +375,12 @@ def creditos_usuario(t: dict[str, pd.DataFrame], usuario: str, hoy: date) -> pd.
         saldos = pd.Series(dtype=float)
     filas = []
     for _, c in cre.iterrows():
-        limite = float(pd.to_numeric(c["limite"], errors="coerce") or 0)
+        limite = pd.to_numeric(c["limite"], errors="coerce")
+        limite = 0.0 if pd.isna(limite) else float(limite)
         saldo = max(0.0, float(saldos.get(str(c["id"]), 0.0)))
         pago = proxima_fecha(c["dia_pago"], hoy)
+        total_int = pd.to_numeric(c.get("pago_total_intereses", 0), errors="coerce")
+        total_int = 0.0 if pd.isna(total_int) else float(total_int)
         filas.append({
             "id": c["id"], "nombre": c["nombre"], "banco": c["banco"],
             "tipo": c["tipo"] or "Tarjeta de crédito", "limite": limite,
@@ -385,6 +389,9 @@ def creditos_usuario(t: dict[str, pd.DataFrame], usuario: str, hoy: date) -> pd.
             "uso": 0.0 if limite <= 0 else min(1.0, saldo / limite),
             "prox_corte": proxima_fecha(c["dia_corte"], hoy), "prox_pago": pago,
             "dias_pago": (pago - hoy).days if pago else None,
+            # Capturado por la persona (del estado de cuenta o del contrato). 0 = sin capturar.
+            "pago_total": total_int,
+            "intereses": max(0.0, total_int - saldo) if total_int else 0.0,
         })
     return pd.DataFrame(filas, columns=cols)
 
