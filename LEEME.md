@@ -61,6 +61,7 @@ Los datos de ejemplo del usuario `demo` se pueden borrar de la hoja cuando empie
 
 - **Saldo inicial:** al empezar, registra en Ingresos el dinero que ya tienes con el tipo "Saldo inicial", una sola vez.
 - **Metas:** crea metas con costo y fecha objetivo, registra aportaciones y ve cuánto apartar al mes.
+- **Correos:** el saldo disponible se muestra oculto ($****40); el monto completo se consulta en la app.
 
 ## Recordatorios por correo y Google Calendar
 
@@ -77,6 +78,7 @@ Qué queda programado:
 - Los lunes a las 9 a.m.: resumen semanal con lo pagado, lo pendiente, los ingresos por cobrar y las metas.
 - Cada hora: los pagos pendientes se agregan al calendario "Finanzas Familiares - Pagos" con invitación al correo de cada persona, y los pagados se marcan en verde.
 
-## Siguiente fase
+## Ahorro e historial
 
-- Historial con gráficas por mes y por categoría.
+- **Ahorro:** un ahorro libre, aparte de las metas. "Agregar ahorro" lo guarda (sale de tu disponible) y "Descontar ahorro" lo regresa. Se registra en la pestaña Ahorro de la hoja.
+- **Historial:** ingresos contra gastos por mes, gastos por categoría, ahorro acumulado y una tabla con el detalle de cada mes (últimos 3, 6 o 12 meses).

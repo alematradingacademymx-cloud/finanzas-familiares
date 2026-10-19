@@ -200,7 +200,9 @@ function saldo_(d, usuario) {
   const pagado = suma(d.Pagos.filter(p => p.usuario === usuario && p.estado === 'Pagado'), 'monto_pagado');
   const gastado = suma(d.Gastos_Variables.filter(g => g.usuario === usuario), 'monto');
   const apartado = suma(d.Aportaciones.filter(a => a.usuario === usuario), 'monto');
-  return recibido - pagado - gastado - apartado;
+  const ahorro = (d.Ahorro || []).filter(a => a.usuario === usuario)
+    .reduce((s, a) => s + (a.tipo === 'Retiro' ? -1 : 1) * num_(a.monto), 0);
+  return recibido - pagado - gastado - apartado - ahorro;
 }
 
 function metas_(d, usuario, hoy) {
@@ -222,9 +224,11 @@ function metas_(d, usuario, hoy) {
 function leerTodo_() {
   const libro = SpreadsheetApp.getActive();
   const d = {};
-  ['Usuarios', 'Ingresos', 'Compromisos', 'Pagos', 'Gastos_Variables', 'Metas', 'Aportaciones']
+  ['Usuarios', 'Ingresos', 'Compromisos', 'Pagos', 'Gastos_Variables', 'Metas', 'Aportaciones', 'Ahorro']
     .forEach(nombre => {
-      const valores = libro.getSheetByName(nombre).getDataRange().getValues();
+      const hoja = libro.getSheetByName(nombre);
+      if (!hoja) { d[nombre] = []; return; }
+      const valores = hoja.getDataRange().getValues();
       const enc = valores[0].map(String);
       d[nombre] = valores.slice(1)
         .map((fila, i) => {

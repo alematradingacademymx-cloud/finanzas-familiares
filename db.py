@@ -27,12 +27,13 @@ COLUMNAS = {
     "Metas": ["id", "usuario", "nombre", "costo", "fecha_objetivo", "actual", "faltante", "avance",
               "meses_restantes", "ahorro_mensual", "prioridad", "estado", "incluir_en_faltante"],
     "Aportaciones": ["id", "usuario", "meta_id", "fecha", "monto", "notas"],
+    "Ahorro": ["id", "usuario", "fecha", "tipo", "monto", "notas"],
     "Categorias": ["tipo", "categoria"],
 }
 
 PREFIJOS = {
     "Ingresos": "ING", "Compromisos": "COM", "Pagos": "PAG",
-    "Gastos_Variables": "GV", "Metas": "MET", "Aportaciones": "APO",
+    "Gastos_Variables": "GV", "Metas": "MET", "Aportaciones": "APO", "Ahorro": "AHO",
 }
 
 # Columnas que se guardan como texto aunque parezcan números o fechas.

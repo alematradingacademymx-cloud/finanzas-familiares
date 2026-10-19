@@ -184,8 +184,22 @@ def resumen_mes(t: dict[str, pd.DataFrame], usuario: str, mes: str) -> dict:
 
 # ---------- saldo y calendario de pagos ----------
 
+def movimientos_ahorro(t: dict[str, pd.DataFrame], usuario: str) -> pd.DataFrame:
+    """Depósitos (+) y retiros (-) del ahorro libre, en orden de fecha."""
+    aho = del_usuario(t.get("Ahorro", pd.DataFrame()), usuario)
+    if aho.empty:
+        return pd.DataFrame(columns=["id", "fecha", "tipo", "monto", "con_signo", "notas"])
+    aho = aho.assign(fecha=aho["fecha"].apply(a_fecha), monto=a_num(aho["monto"]))
+    aho["con_signo"] = aho["monto"].where(aho["tipo"] != "Retiro", -aho["monto"])
+    return aho.sort_values("fecha", na_position="last")[["id", "fecha", "tipo", "monto", "con_signo", "notas"]]
+
+
+def saldo_ahorro(t: dict[str, pd.DataFrame], usuario: str) -> float:
+    return float(movimientos_ahorro(t, usuario)["con_signo"].sum())
+
+
 def saldo_actual(t: dict[str, pd.DataFrame], usuario: str) -> float:
-    """Dinero que tienes hoy: todo lo recibido menos todo lo pagado, gastado y apartado en metas."""
+    """Dinero que tienes hoy: lo recibido menos lo pagado, gastado, apartado en metas y guardado en ahorro."""
     ing = del_usuario(t["Ingresos"], usuario)
     pag = del_usuario(t["Pagos"], usuario)
     gv = del_usuario(t["Gastos_Variables"], usuario)
@@ -194,7 +208,87 @@ def saldo_actual(t: dict[str, pd.DataFrame], usuario: str) -> float:
     pagado = a_num(pag.loc[pag["estado"] == "Pagado", "monto_pagado"]).sum() if not pag.empty else 0
     gastado = a_num(gv["monto"]).sum() if not gv.empty else 0
     apartado = a_num(apo["monto"]).sum() if not apo.empty else 0
-    return float(recibido - pagado - gastado - apartado)
+    return float(recibido - pagado - gastado - apartado - saldo_ahorro(t, usuario))
+
+
+# ---------- historial ----------
+
+def ultimos_meses(actual: str, n: int) -> list[str]:
+    return [sumar_meses(actual, -i) for i in range(n - 1, -1, -1)]
+
+
+def _mes_de_valor(v) -> str | None:
+    f = a_fecha(v)
+    return mes_de(f) if f else None
+
+
+def historial_mensual(t: dict[str, pd.DataFrame], usuario: str, meses: list[str]) -> pd.DataFrame:
+    """Por mes: ingresos, pagos fijos, gastos variables, balance y lo que pasó a ahorro y metas."""
+    ing = del_usuario(t["Ingresos"], usuario)
+    pag = del_usuario(t["Pagos"], usuario)
+    gv = del_usuario(t["Gastos_Variables"], usuario)
+    apo = del_usuario(t["Aportaciones"], usuario)
+    mov = movimientos_ahorro(t, usuario)
+
+    def por_mes(df, col_fecha, valores) -> pd.Series:
+        if df.empty:
+            return pd.Series(0.0, index=meses)
+        m = df[col_fecha].apply(_mes_de_valor)
+        return pd.Series(list(valores), index=m.values).groupby(level=0).sum().reindex(meses, fill_value=0.0)
+
+    if not ing.empty:  # el saldo inicial no es un ingreso del mes
+        ing = ing[(ing["estado"] == "Recibido") & (ing["tipo"] != "Saldo inicial")]
+    if not pag.empty:
+        pag = pag[pag["estado"] == "Pagado"]
+
+    ingresos = por_mes(ing, "fecha", a_num(ing["monto"]) if not ing.empty else [])
+    pagos = por_mes(pag, "fecha_pago", a_num(pag["monto_pagado"]) if not pag.empty else [])
+    variables = por_mes(gv, "fecha", a_num(gv["monto"]) if not gv.empty else [])
+    a_metas = por_mes(apo, "fecha", a_num(apo["monto"]) if not apo.empty else [])
+    a_ahorro = por_mes(mov, "fecha", mov["con_signo"] if not mov.empty else [])
+
+    df = pd.DataFrame({
+        "ingresos": ingresos, "pagos_fijos": pagos, "gastos_variables": variables,
+        "a_ahorro": a_ahorro, "a_metas": a_metas,
+    }, index=meses).fillna(0.0)
+    df["gastos"] = df["pagos_fijos"] + df["gastos_variables"]
+    df["balance"] = df["ingresos"] - df["gastos"]
+    return df
+
+
+def gastos_por_categoria(t: dict[str, pd.DataFrame], usuario: str, meses: list[str]) -> pd.Series:
+    """Total gastado por categoría (pagos fijos pagados + gastos variables) en los meses indicados."""
+    partes = []
+    pag = del_usuario(t["Pagos"], usuario)
+    if not pag.empty:
+        pag = pag[(pag["estado"] == "Pagado") & pag["fecha_pago"].apply(_mes_de_valor).isin(meses)]
+        comps = del_usuario(t["Compromisos"], usuario)
+        cat = dict(zip(comps["id"].astype(str), comps["categoria"])) if not comps.empty else {}
+        partes.append(pd.Series(a_num(pag["monto_pagado"]).values,
+                                index=pag["compromiso_id"].astype(str).map(cat).fillna("Otros").values))
+    gv = del_usuario(t["Gastos_Variables"], usuario)
+    if not gv.empty:
+        gv = gv[gv["fecha"].apply(_mes_de_valor).isin(meses)]
+        partes.append(pd.Series(a_num(gv["monto"]).values, index=gv["categoria"].replace("", "Otros").values))
+    if not partes:
+        return pd.Series(dtype=float)
+    total = pd.concat(partes).groupby(level=0).sum()
+    return total[total > 0].sort_values(ascending=False)
+
+
+def ahorro_acumulado(t: dict[str, pd.DataFrame], usuario: str, meses: list[str]) -> pd.DataFrame:
+    """Saldo al cierre de cada mes del ahorro libre y de lo aportado a metas."""
+    mov = movimientos_ahorro(t, usuario)
+    apo = del_usuario(t["Aportaciones"], usuario)
+    filas = []
+    for m in meses:
+        y, mm = map(int, m.split("-"))
+        fin = date(y, mm, calendar.monthrange(y, mm)[1])
+        libre = mov.loc[mov["fecha"].apply(lambda f: f is not None and f <= fin), "con_signo"].sum() if not mov.empty else 0
+        metas = (a_num(apo.loc[apo["fecha"].apply(lambda f: (a_fecha(f) or date.max) <= fin), "monto"]).sum()
+                 if not apo.empty else 0)
+        filas.append({"mes": m, "Ahorro": float(libre), "Metas": float(metas)})
+    return pd.DataFrame(filas).set_index("mes")
 
 
 def calendario_pagos(t: dict[str, pd.DataFrame], usuario: str, hoy: date) -> pd.DataFrame:

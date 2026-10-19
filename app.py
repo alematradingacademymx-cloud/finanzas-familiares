@@ -64,7 +64,7 @@ if not st.session_state.get("pagos_generados"):
 
 with st.sidebar:
     st.subheader(f"Hola, {st.session_state.nombre}")
-    pagina = st.radio("Menú", ["Resumen", "Ingresos", "Pagos y gastos fijos", "Gastos variables", "Metas"])
+    pagina = st.radio("Menú", ["Resumen", "Ingresos", "Pagos y gastos fijos", "Gastos variables", "Ahorro", "Metas", "Historial"])
     actual = logic.mes_de(hoy())
     meses = [logic.sumar_meses(actual, i) for i in range(-6, 3)]
     mes = st.selectbox("Mes", meses, index=6, format_func=nombre_mes)
@@ -123,7 +123,8 @@ def pagina_resumen() -> None:
     st.subheader("Calendario de pagos")
     cal = logic.calendario_pagos(t, U, hoy())
     saldo = logic.saldo_actual(t, U)
-    st.caption(f"Dinero disponible hoy (todo lo recibido menos lo pagado, gastado y apartado en metas): {dinero(saldo)}")
+    st.caption(f"Dinero disponible hoy (lo recibido menos lo pagado, gastado y lo que guardaste en ahorro y metas): "
+               f"{dinero(saldo)} · Tu ahorro: {dinero(logic.saldo_ahorro(t, U))}")
     if cal.empty:
         st.info("No tienes pagos pendientes.")
     else:
@@ -436,10 +437,129 @@ def pagina_metas() -> None:
             }).sort_values("Fecha", ascending=False), hide_index=True)
 
 
+AZUL, NARANJA, AQUA = "#3987e5", "#d95926", "#199e70"
+
+
+def pagina_ahorro() -> None:
+    st.title("Ahorro")
+    total = logic.saldo_ahorro(t, U)
+    disponible = logic.saldo_actual(t, U)
+    c1, c2 = st.columns(2)
+    c1.metric("Tu ahorro", dinero(total))
+    c2.metric("Dinero disponible", dinero(disponible))
+    st.caption("Al agregar ahorro, ese dinero sale de tu disponible y queda guardado aquí. "
+               "Al retirarlo, regresa a tu disponible. Es aparte de tus metas.")
+
+    agregar, retirar = st.columns(2)
+    with agregar.form("deposito", clear_on_submit=True):
+        st.subheader("Agregar ahorro")
+        monto = st.number_input("Monto", min_value=0.0, step=100.0, format="%.2f", key="dep_monto")
+        fecha = st.date_input("Fecha", value=hoy(), format="DD/MM/YYYY", key="dep_fecha")
+        nota = st.text_input("Nota (opcional)", key="dep_nota")
+        if st.form_submit_button("Agregar", type="primary"):
+            if monto <= 0:
+                st.error("Escribe un monto mayor a cero.")
+            else:
+                db.agregar("Ahorro", [{"usuario": U, "fecha": fecha.isoformat(), "tipo": "Depósito",
+                                       "monto": monto, "notas": nota}])
+                st.toast(f"Agregaste {dinero(monto)} a tu ahorro")
+                st.rerun()
+    with retirar.form("retiro", clear_on_submit=True):
+        st.subheader("Descontar ahorro")
+        monto = st.number_input("Monto", min_value=0.0, step=100.0, format="%.2f", key="ret_monto")
+        fecha = st.date_input("Fecha", value=hoy(), format="DD/MM/YYYY", key="ret_fecha")
+        nota = st.text_input("¿Para qué lo usaste? (opcional)", key="ret_nota")
+        if st.form_submit_button("Descontar"):
+            if monto <= 0:
+                st.error("Escribe un monto mayor a cero.")
+            elif monto > total + 0.005:
+                st.error(f"No puedes descontar más de lo que tienes ahorrado ({dinero(total)}).")
+            else:
+                db.agregar("Ahorro", [{"usuario": U, "fecha": fecha.isoformat(), "tipo": "Retiro",
+                                       "monto": monto, "notas": nota}])
+                st.toast(f"Descontaste {dinero(monto)} de tu ahorro")
+                st.rerun()
+
+    mov = logic.movimientos_ahorro(t, U)
+    if mov.empty:
+        st.info("Aún no tienes movimientos de ahorro.")
+        return
+    mov = mov.assign(saldo=mov["con_signo"].cumsum())
+    st.subheader("Cómo ha crecido tu ahorro")
+    serie = mov.dropna(subset=["fecha"]).groupby("fecha")["saldo"].last()
+    serie.index = pd.to_datetime(serie.index)
+    st.line_chart(serie.rename("Ahorro"), color=AZUL, x_label="", y_label="Ahorro ($)")
+    st.subheader("Movimientos")
+    st.dataframe(pd.DataFrame({
+        "Fecha": mov["fecha"].apply(fecha_txt),
+        "Movimiento": mov["tipo"],
+        "Monto": mov["con_signo"].apply(lambda x: ("+" if x >= 0 else "-") + dinero(abs(x))),
+        "Saldo": mov["saldo"].apply(dinero),
+        "Nota": mov["notas"],
+    }).iloc[::-1], hide_index=True)
+
+
+def pagina_historial() -> None:
+    st.title("Historial")
+    actual = logic.mes_de(hoy())
+    n = st.radio("Periodo", [3, 6, 12], index=1, horizontal=True, format_func=lambda x: f"Últimos {x} meses")
+    meses = logic.ultimos_meses(actual, n)
+    h = logic.historial_mensual(t, U, meses)
+    if h[["ingresos", "gastos", "a_ahorro", "a_metas"]].abs().sum().sum() == 0:
+        st.info("Aún no hay movimientos en este periodo. Conforme registres ingresos, pagos y gastos, "
+                "aquí verás cómo cambian mes a mes.")
+        return
+
+    etiquetas = [nombre_mes(m) for m in meses]
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Ingresos del periodo", dinero(h["ingresos"].sum()))
+    c2.metric("Gastos del periodo", dinero(h["gastos"].sum()))
+    c3.metric("Balance", dinero(h["balance"].sum()))
+    st.caption("Los ingresos no incluyen tu saldo inicial. Los gastos son pagos fijos pagados más gastos variables.")
+
+    st.subheader("Ingresos y gastos por mes")
+    barras = pd.DataFrame({"Ingresos": h["ingresos"].values, "Gastos": h["gastos"].values},
+                          index=pd.Index(meses, name="Mes"))
+    st.bar_chart(barras, stack=False, color=[AZUL, NARANJA], x_label="", y_label="Monto ($)")
+
+    st.subheader("¿En qué se va tu dinero?")
+    opciones = ["Todo el periodo"] + meses[::-1]
+    elegido = st.selectbox("Mes", opciones, format_func=lambda m: m if m == "Todo el periodo" else nombre_mes(m))
+    cats = logic.gastos_por_categoria(t, U, meses if elegido == "Todo el periodo" else [elegido])
+    if cats.empty:
+        st.info("No hay gastos registrados en ese periodo.")
+    else:
+        st.bar_chart(cats.rename("Gastado"), horizontal=True, color=AZUL, x_label="Monto ($)", y_label="")
+        st.dataframe(pd.DataFrame({
+            "Categoría": cats.index, "Gastado": cats.apply(dinero).values,
+            "% del total": (cats / cats.sum()).apply(lambda x: f"{x:.0%}").values,
+        }), hide_index=True)
+
+    acum = logic.ahorro_acumulado(t, U, meses)
+    if acum.abs().sum().sum() > 0:
+        st.subheader("Ahorro acumulado")
+        acum.index = pd.Index(meses, name="Mes")
+        st.line_chart(acum, color=[AZUL, AQUA], x_label="", y_label="Monto ($)")
+        st.caption("Ahorro: tu ahorro libre al cierre de cada mes. Metas: lo aportado a tus metas hasta ese mes.")
+
+    st.subheader("Detalle por mes")
+    st.dataframe(pd.DataFrame({
+        "Mes": etiquetas,
+        "Ingresos": h["ingresos"].apply(dinero).values,
+        "Pagos fijos": h["pagos_fijos"].apply(dinero).values,
+        "Gastos variables": h["gastos_variables"].apply(dinero).values,
+        "Balance": h["balance"].apply(dinero).values,
+        "A ahorro": h["a_ahorro"].apply(dinero).values,
+        "A metas": h["a_metas"].apply(dinero).values,
+    }).iloc[::-1], hide_index=True)
+
+
 {
     "Resumen": pagina_resumen,
     "Ingresos": pagina_ingresos,
     "Pagos y gastos fijos": pagina_pagos,
     "Gastos variables": pagina_gastos,
+    "Ahorro": pagina_ahorro,
     "Metas": pagina_metas,
+    "Historial": pagina_historial,
 }[pagina]()
