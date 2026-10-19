@@ -199,10 +199,9 @@ function saldo_(d, usuario) {
   const recibido = suma(d.Ingresos.filter(i => i.usuario === usuario && i.estado === 'Recibido'), 'monto');
   const pagado = suma(d.Pagos.filter(p => p.usuario === usuario && p.estado === 'Pagado'), 'monto_pagado');
   const gastado = suma(d.Gastos_Variables.filter(g => g.usuario === usuario), 'monto');
-  const apartado = suma(d.Aportaciones.filter(a => a.usuario === usuario), 'monto');
-  const ahorro = (d.Ahorro || []).filter(a => a.usuario === usuario)
-    .reduce((s, a) => s + (a.tipo === 'Retiro' ? -1 : 1) * num_(a.monto), 0);
-  return recibido - pagado - gastado - apartado - ahorro;
+  // El ahorro es dinero aparte: no se resta, ni las aportaciones a metas que salen del ahorro.
+  const apartado = suma(d.Aportaciones.filter(a => a.usuario === usuario && a.origen !== 'Ahorro'), 'monto');
+  return recibido - pagado - gastado - apartado;
 }
 
 function metas_(d, usuario, hoy) {

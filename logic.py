@@ -199,7 +199,10 @@ def saldo_ahorro(t: dict[str, pd.DataFrame], usuario: str) -> float:
 
 
 def saldo_actual(t: dict[str, pd.DataFrame], usuario: str) -> float:
-    """Dinero que tienes hoy: lo recibido menos lo pagado, gastado, apartado en metas y guardado en ahorro."""
+    """Dinero que tienes hoy: lo recibido menos lo pagado, lo gastado y lo que aportaste a metas desde aquí.
+
+    El ahorro es dinero aparte: no se resta, y las aportaciones a metas que salen del ahorro tampoco.
+    """
     ing = del_usuario(t["Ingresos"], usuario)
     pag = del_usuario(t["Pagos"], usuario)
     gv = del_usuario(t["Gastos_Variables"], usuario)
@@ -207,8 +210,10 @@ def saldo_actual(t: dict[str, pd.DataFrame], usuario: str) -> float:
     recibido = a_num(ing.loc[ing["estado"] == "Recibido", "monto"]).sum() if not ing.empty else 0
     pagado = a_num(pag.loc[pag["estado"] == "Pagado", "monto_pagado"]).sum() if not pag.empty else 0
     gastado = a_num(gv["monto"]).sum() if not gv.empty else 0
+    if not apo.empty:
+        apo = apo[apo["origen"].astype(str) != "Ahorro"]
     apartado = a_num(apo["monto"]).sum() if not apo.empty else 0
-    return float(recibido - pagado - gastado - apartado - saldo_ahorro(t, usuario))
+    return float(recibido - pagado - gastado - apartado)
 
 
 # ---------- historial ----------

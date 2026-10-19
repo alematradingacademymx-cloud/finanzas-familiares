@@ -123,8 +123,8 @@ def pagina_resumen() -> None:
     st.subheader("Calendario de pagos")
     cal = logic.calendario_pagos(t, U, hoy())
     saldo = logic.saldo_actual(t, U)
-    st.caption(f"Dinero disponible hoy (lo recibido menos lo pagado, gastado y lo que guardaste en ahorro y metas): "
-               f"{dinero(saldo)} · Tu ahorro: {dinero(logic.saldo_ahorro(t, U))}")
+    st.caption(f"Dinero disponible hoy (lo recibido menos lo pagado y gastado): {dinero(saldo)} · "
+               f"Tu ahorro, aparte: {dinero(logic.saldo_ahorro(t, U))}")
     if cal.empty:
         st.info("No tienes pagos pendientes.")
     else:
@@ -404,17 +404,11 @@ def pagina_metas() -> None:
                 with st.form(f"aportar_{mt['id']}"):
                     monto = st.number_input("Monto", min_value=0.0, step=100.0, format="%.2f")
                     fecha = st.date_input("Fecha", value=hoy(), format="DD/MM/YYYY")
+                    origen = st.radio("¿De dónde sale el dinero?", ["Ahorro", "Disponible"], horizontal=True,
+                                      help="Ahorro: se descuenta de tu ahorro. Disponible: se descuenta "
+                                           "del dinero para tus gastos del mes.")
                     if st.form_submit_button("Guardar aportación", type="primary"):
-                        if monto <= 0:
-                            st.error("Escribe un monto mayor a cero.")
-                        else:
-                            db.agregar("Aportaciones", [{
-                                "usuario": U, "meta_id": mt["id"], "fecha": fecha.isoformat(), "monto": monto,
-                            }])
-                            if mt["actual"] + monto >= mt["costo"]:
-                                db.actualizar("Metas", mt["id"], {"estado": "Cumplida"})
-                                st.balloons()
-                            st.toast("Aportación guardada")
+                        if aportar_a_meta(mt, monto, fecha, origen):
                             st.rerun()
             if mt["estado"] == "Activa" and b.button("Pausar", key=f"pausa_{mt['id']}"):
                 db.actualizar("Metas", mt["id"], {"estado": "Pausada"})
@@ -434,21 +428,42 @@ def pagina_metas() -> None:
                 "Fecha": apo["fecha"],
                 "Meta": apo["meta_id"].astype(str).map(nombres).fillna(apo["meta_id"]),
                 "Monto": logic.a_num(apo["monto"]).apply(dinero),
+                "Salió de": apo["origen"].replace("", "Disponible"),
             }).sort_values("Fecha", ascending=False), hide_index=True)
 
 
 AZUL, NARANJA, AQUA = "#3987e5", "#d95926", "#199e70"
 
 
+def aportar_a_meta(meta, monto: float, fecha: date, origen: str) -> bool:
+    """Guarda una aportación a una meta. Si sale del ahorro, también lo descuenta del ahorro."""
+    if monto <= 0:
+        st.error("Escribe un monto mayor a cero.")
+        return False
+    if origen == "Ahorro":
+        ahorro = logic.saldo_ahorro(t, U)
+        if monto > ahorro + 0.005:
+            st.error(f"Tu ahorro es de {dinero(ahorro)}. No alcanza para aportar {dinero(monto)}.")
+            return False
+        db.agregar("Ahorro", [{"usuario": U, "fecha": fecha.isoformat(), "tipo": "Retiro",
+                               "monto": monto, "notas": f"Aportación a la meta: {meta['nombre']}"}])
+    db.agregar("Aportaciones", [{"usuario": U, "meta_id": meta["id"], "fecha": fecha.isoformat(),
+                                 "monto": monto, "origen": origen}])
+    if meta["actual"] + monto >= meta["costo"]:
+        db.actualizar("Metas", meta["id"], {"estado": "Cumplida"})
+    st.toast(f"Agregaste {dinero(monto)} a {meta['nombre']}")
+    return True
+
+
 def pagina_ahorro() -> None:
     st.title("Ahorro")
     total = logic.saldo_ahorro(t, U)
-    disponible = logic.saldo_actual(t, U)
     c1, c2 = st.columns(2)
     c1.metric("Tu ahorro", dinero(total))
-    c2.metric("Dinero disponible", dinero(disponible))
-    st.caption("Al agregar ahorro, ese dinero sale de tu disponible y queda guardado aquí. "
-               "Al retirarlo, regresa a tu disponible. Es aparte de tus metas.")
+    metas = logic.metas_usuario(t, U, hoy())
+    c2.metric("Ahorrado en metas", dinero(metas["actual"].sum() if not metas.empty else 0))
+    st.caption("Tu ahorro es dinero aparte: no se descuenta de tu disponible ni de tus gastos del mes. "
+               "Desde aquí también puedes pasar ahorro a una de tus metas.")
 
     agregar, retirar = st.columns(2)
     with agregar.form("deposito", clear_on_submit=True):
@@ -479,6 +494,27 @@ def pagina_ahorro() -> None:
                                        "monto": monto, "notas": nota}])
                 st.toast(f"Descontaste {dinero(monto)} de tu ahorro")
                 st.rerun()
+
+    st.subheader("Agregar a una meta")
+    abiertas = metas[metas["estado"] != "Cumplida"] if not metas.empty else metas
+    if abiertas.empty:
+        st.info("No tienes metas abiertas. Crea una en la sección **Metas** para pasarle ahorro.")
+    else:
+        with st.form("ahorro_a_meta", clear_on_submit=True):
+            ids = abiertas["id"].tolist()
+            info = abiertas.set_index("id")
+            meta_id = st.selectbox(
+                "Meta", ids,
+                format_func=lambda i: f"{info.loc[i, 'nombre']} (llevas {dinero(info.loc[i, 'actual'])} "
+                                      f"de {dinero(info.loc[i, 'costo'])})")
+            a, b = st.columns(2)
+            monto = a.number_input("¿Cuánto quieres pasar?", min_value=0.0, step=100.0, format="%.2f",
+                                   key="meta_monto")
+            fecha = b.date_input("Fecha", value=hoy(), format="DD/MM/YYYY", key="meta_fecha")
+            st.caption(f"Se descuenta de tu ahorro ({dinero(total)}) y se suma a la meta.")
+            if st.form_submit_button("Agregar a la meta", type="primary"):
+                if aportar_a_meta(info.loc[meta_id].to_dict() | {"id": meta_id}, monto, fecha, "Ahorro"):
+                    st.rerun()
 
     mov = logic.movimientos_ahorro(t, U)
     if mov.empty:

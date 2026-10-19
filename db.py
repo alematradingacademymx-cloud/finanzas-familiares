@@ -26,7 +26,7 @@ COLUMNAS = {
                          "metodo_pago", "notas"],
     "Metas": ["id", "usuario", "nombre", "costo", "fecha_objetivo", "actual", "faltante", "avance",
               "meses_restantes", "ahorro_mensual", "prioridad", "estado", "incluir_en_faltante"],
-    "Aportaciones": ["id", "usuario", "meta_id", "fecha", "monto", "notas"],
+    "Aportaciones": ["id", "usuario", "meta_id", "fecha", "monto", "notas", "origen"],
     "Ahorro": ["id", "usuario", "fecha", "tipo", "monto", "notas"],
     "Categorias": ["tipo", "categoria"],
 }
