@@ -101,6 +101,10 @@ def pagina_resumen() -> None:
     c3, c4 = st.columns(2)
     c3.metric("Gastado (pagos + variables)", dinero(r["pagos_realizados"] + r["gastos_variables"]))
     c4.metric("Disponible del mes", dinero(r["disponible"]))
+    metas_r = logic.metas_usuario(t, U, hoy())
+    c5, c6 = st.columns(2)
+    c5.metric("Tu ahorro", dinero(logic.saldo_ahorro(t, U)), help="Dinero aparte: no se descuenta de tu disponible.")
+    c6.metric("Ahorrado en metas", dinero(metas_r["actual"].sum() if not metas_r.empty else 0))
 
     if r["faltante"] == 0:
         st.success("Con lo que ya recibiste alcanzas a cubrir los pagos y el ahorro de este mes.")
