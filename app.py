@@ -13,12 +13,14 @@ import logic
 
 st.set_page_config(page_title="Finanzas Familiares", page_icon=":material/savings:", layout="centered")
 
-# Oculta los íconos de la barra superior (compartir, estrella, editar, GitHub y menú) y el pie de página.
-# El botón para abrir el menú lateral se queda visible.
+# Oculta solo los íconos de la barra superior (compartir, estrella, editar, GitHub y menú) y el pie de página.
+# No se oculta la barra completa (stToolbar/stHeader): ahí vive el botón para volver a abrir el menú lateral.
 st.markdown("""
 <style>
-[data-testid="stToolbar"], [data-testid="stToolbarActions"], [data-testid="stAppDeployButton"],
-.stAppDeployButton, #MainMenu, footer { display: none !important; visibility: hidden !important; }
+[data-testid="stToolbarActions"], [data-testid="stAppDeployButton"], .stAppDeployButton,
+[data-testid="stMainMenu"], #MainMenu, footer { display: none !important; }
+[data-testid="stExpandSidebarButton"], [data-testid="stSidebarCollapsedControl"],
+[data-testid="stSidebarCollapseButton"] { display: flex !important; visibility: visible !important; }
 </style>
 """, unsafe_allow_html=True)
 
